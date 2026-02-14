@@ -1,0 +1,5 @@
+fastapi==0.95.2
+uvicorn==0.22.0
+sqlalchemy==1.4.41
+python-dotenv==1.0.0
+openai==0.27.8
