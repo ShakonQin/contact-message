@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from typing import List, Dict
 from openai import OpenAI
@@ -28,15 +29,63 @@ client = OpenAI(
 # 定义有效的情绪标签
 VALID_EMOTIONS = ["happy", "sad", "angry", "surprised", "neutral"]
 
+# 关键词 -> 情绪映射表（用于前置过滤，减少 API 调用）
+EMOTION_KEYWORDS = {
+    "happy": [
+        "哈哈", "开心", "高兴", "太好了", "嘻嘻", "笑死", "乐", "nice", "happy", "哈哈",
+        "耶", "666", "牛", "厉害", "太棒", "爽", "完美", "赞", "好耶", "嘿嘿",
+        "哈哈哈", "lol", "haha", "amazing", "great", "wonderful",
+    ],
+    "sad": [
+        "难过", "伤心", "哭", "呜呜", "悲伤", "唉", "失望", "惨", "痛苦", "sad",
+        "心碎", "遗憾", "可怜", "无奈", "心酸", "郁闷", "崩溃", "想哭",
+    ],
+    "angry": [
+        "生气", "愤怒", "烦", "讨厌", "怒", "滚", "去死", "垃圾", "废物", "angry",
+        "气死", "受不了", "忍无可忍", "无语", "操", "靠", "什么鬼", "火大",
+    ],
+    "surprised": [
+        "天哪", "卧槽", "我去", "震惊", "不敢相信", "什么", "啊", "wow", "omg",
+        "居然", "竟然", "没想到", "不会吧", "真的吗", "离谱", "惊了", "绝了",
+    ],
+}
+
+
+def _keyword_filter(message: str) -> str | None:
+    """
+    用关键词快速判断情绪，如果命中则直接返回标签，否则返回 None 表示需要调用 AI。
+    """
+    text = message.lower()
+    scores = {emotion: 0 for emotion in EMOTION_KEYWORDS}
+
+    for emotion, keywords in EMOTION_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in text:
+                scores[emotion] += 1
+
+    best_emotion = max(scores, key=scores.get)
+    if scores[best_emotion] >= 2:
+        return best_emotion
+    if scores[best_emotion] == 1 and len(message) < 20:
+        return best_emotion
+
+    return None
+
 
 def analyze_emotion(history_messages: List[Dict], current_message: str) -> str:
     """
-    分析用户情绪
+    分析用户情绪。先用关键词过滤，未命中再调用 AI API。
     :param history_messages: 历史消息列表，格式 [{'nickname': 'A', 'content': '...'}, ...]
     :param current_message: 当前用户发送的消息
     :return: 情绪标签 (happy, sad, angry, surprised, neutral)
     """
+    # 第一步：关键词前置过滤
+    quick_result = _keyword_filter(current_message)
+    if quick_result:
+        logger.info(f"关键词命中: {quick_result} | 内容: {current_message[:10]}...")
+        return quick_result
 
+    # 第二步：调用 AI API
     # 构建 Prompt
     history_text = ""
     if history_messages:
@@ -65,7 +114,7 @@ def analyze_emotion(history_messages: List[Dict], current_message: str) -> str:
     """
 
     try:
-        # 调用 API
+        # 调用 API (使用新版 OpenAI SDK)
         response = client.chat.completions.create(
             model=model_id,
             messages=[
@@ -81,7 +130,7 @@ def analyze_emotion(history_messages: List[Dict], current_message: str) -> str:
 
         final_answer = ""
 
-        #解析流式响应
+        # 解析流式响应
         for chunk in response:
             if chunk.choices:
                 delta = chunk.choices[0].delta
@@ -94,7 +143,6 @@ def analyze_emotion(history_messages: List[Dict], current_message: str) -> str:
         result = final_answer.strip().lower()
 
         # 移除可能存在的标点 (如 "happy.")
-        import re
         result = re.sub(r'[^\w]', '', result)
 
         if result in VALID_EMOTIONS:

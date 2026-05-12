@@ -54,7 +54,7 @@ def get_avatar_url(db: Session, user_id: int, emotion: str) -> str:
         return neutral_avatar.image_path
 
     # 最后的保底
-    return "/static/default_avatar.png"
+    return "/static/default_avatar.svg"
 
 
 
@@ -80,16 +80,13 @@ def get_recent_messages_for_agent(db: Session, limit: int = 10) -> List[Dict]:
     获取最近 N 条消息，并格式化为 Agent 可读的格式。
     注意：数据库查询出来是按时间倒序(最新的在最前)，我们需要反转为正序(按时间发生顺序)给 AI。
     """
-    # 联合查询：我们需要 User 表里的 nickname
     messages = db.query(models.Message, models.User.nickname) \
         .join(models.User, models.Message.user_id == models.User.id) \
         .order_by(models.Message.timestamp.desc()) \
         .limit(limit) \
         .all()
 
-
     history = []
-    # 反转列表，让最旧的消息在前面
     for msg, nickname in reversed(messages):
         history.append({
             "nickname": nickname,
@@ -97,3 +94,28 @@ def get_recent_messages_for_agent(db: Session, limit: int = 10) -> List[Dict]:
         })
 
     return history
+
+
+def get_recent_messages_with_avatar(db: Session, limit: int = 50) -> List[Dict]:
+    """
+    获取最近 N 条消息，带头像 URL，用于历史记录展示。
+    按时间正序返回（最旧的在前）。
+    """
+    messages = db.query(models.Message, models.User.nickname) \
+        .join(models.User, models.Message.user_id == models.User.id) \
+        .order_by(models.Message.timestamp.desc()) \
+        .limit(limit) \
+        .all()
+
+    result = []
+    for msg, nickname in reversed(messages):
+        avatar_url = get_avatar_url(db, msg.user_id, msg.detected_emotion)
+        result.append({
+            "user_id": msg.user_id,
+            "nickname": nickname,
+            "content": msg.content,
+            "emotion": msg.detected_emotion,
+            "avatar": avatar_url,
+        })
+
+    return result
